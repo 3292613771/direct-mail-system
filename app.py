@@ -23,7 +23,7 @@ app.secret_key = 'direct-mail-2024'
 # ===== 配置 =====
 ACCOUNTS_FILE = "accounts.txt"
 LINKS_FILE = "links.json"
-ADMIN_PASSWORD = "060910"
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '060910')
 DEFAULT_DAYS = 30
 DOMAIN = "qqmailapi.zeabur.app"
 
@@ -66,7 +66,7 @@ def load_accounts():
 ACCOUNTS = load_accounts()
 print(f"已加载 {len(ACCOUNTS)} 个邮箱")
 
-# ===== 邮件解析（老版本逻辑） =====
+# ===== 邮件解析 =====
 def decode_str(s):
     if not s:
         return ""
@@ -146,7 +146,6 @@ def get_mail_content(msg):
         return "解析失败"
 
 def get_latest_mails(email_addr, limit=10):
-    """获取最新邮件"""
     if email_addr not in ACCOUNTS:
         return {'error': f'邮箱未绑定'}
     
@@ -188,7 +187,6 @@ def get_latest_mails(email_addr, limit=10):
         if not all_mail_ids:
             return []
         
-        # 去重排序
         seen = set()
         unique_ids = []
         unique_folders = []
@@ -205,7 +203,7 @@ def get_latest_mails(email_addr, limit=10):
         mails = []
         for mail_id, folder in reversed(latest_pairs):
             try:
-                mail_id_str = mail_id.decode() if isinstance(mail_id, bytes) else str(mail_id)
+                mail_id_str = mail_id.decode() if isinstance(mid, bytes) else str(mail_id)
                 mail.select(folder)
                 _, msg_data = mail.fetch(mail_id, "(RFC822)")
                 
@@ -271,7 +269,9 @@ def login():
     return '''
     <!DOCTYPE html>
     <html>
-    <head><meta charset="UTF-8"><title>登录</title></head>
+    <head><meta charset="UTF-8"><title>登录</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    </head>
     <body style="font-family:Arial;max-width:400px;margin:100px auto;padding:20px;">
         <h2>🔐 后台登录</h2>
         <form method="post">
@@ -290,14 +290,12 @@ def admin():
     
     links = load_links()
     
-    # 统计
     total = len(ACCOUNTS)
     used_emails = set()
     for data in links.values():
         used_emails.add(data['email'])
     used = len(used_emails)
     
-    # 链接列表
     link_list = ""
     for link_id, data in links.items():
         status = '✅' if data['status'] == 'active' else '⛔'
@@ -309,7 +307,7 @@ def admin():
         link_url = f"https://{DOMAIN}/m/{link_id}"
         link_list += f"""
         <tr>
-            <td><a href="{link_url}" target="_blank">{link_id}</a></td>
+            <td><a href="{link_url}" target="_blank">{link_url}</a></td>
             <td>{data['email']}</td>
             <td>{data['created_at']}</td>
             <td>{data['expire_at']}</td>
@@ -325,7 +323,9 @@ def admin():
     return f'''
     <!DOCTYPE html>
     <html>
-    <head><meta charset="UTF-8"><title>直连邮箱系统</title></head>
+    <head><meta charset="UTF-8"><title>直连邮箱系统</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    </head>
     <body style="font-family:Arial;max-width:1200px;margin:20px auto;padding:20px;">
         <h2>📧 直连邮箱系统</h2>
         
@@ -365,7 +365,7 @@ def admin():
         <hr>
         <h3>🔗 链接列表（共 {len(links)} 个）</h3>
         <table border="1" cellpadding="8" style="width:100%;border-collapse:collapse;">
-        <tr><th>链接ID</th><th>邮箱</th><th>创建时间</th><th>过期时间</th><th>状态</th><th>查询次数</th><th>操作</th></tr>
+        <tr><th>链接</th><th>邮箱</th><th>创建时间</th><th>过期时间</th><th>状态</th><th>查询次数</th><th>操作</th></tr>
         {link_list if link_list else '<tr><td colspan="7">暂无链接</td></tr>'}
         </table>
         <p style="color:#999;">✅正常 ⏰过期 ⛔禁用</p>
@@ -403,7 +403,7 @@ def batch_create():
             failed.append(f"{email_addr}（未绑定）")
             continue
         
-        # 检查是否已生成过
+        # 检查是否已存在
         existing = None
         for lid, ldata in links.items():
             if ldata['email'] == email_addr and ldata['status'] == 'active':
@@ -411,7 +411,8 @@ def batch_create():
                 break
         
         if existing:
-            created.append(f"{email_addr} → /m/{existing}（已存在）")
+            link_url = f"https://{DOMAIN}/m/{existing}"
+            created.append(f"✅ {email_addr} → {link_url}（已存在）")
             continue
         
         link_id = str(uuid.uuid4())[:8]
@@ -423,17 +424,17 @@ def batch_create():
             'status': 'active',
             'query_count': 0
         }
-        created.append(f"{email_addr} → /m/{link_id}")
+        link_url = f"https://{DOMAIN}/m/{link_id}"
+        created.append(f"✅ {email_addr} → {link_url}")
     
     save_links(links)
     
-    result = "<h2>✅ 生成结果</h2>"
+    result = "<h2>📧 生成结果</h2>"
     for c in created:
-        result += f"<p>✅ {c}</p>"
+        result += f"<p>{c}</p>"
     for f in failed:
         result += f"<p>❌ {f}</p>"
-    result += f'<p>共生成 {len(created) - len([x for x in created if "已存在" in x])} 个新链接</p>'
-    result += '<a href="/admin">返回后台</a>'
+    result += '<br><a href="/admin">返回后台</a>'
     return result
 
 # ===== 单个生成链接 =====
@@ -513,10 +514,9 @@ def delete_link(link_id):
     
     return redirect('/admin')
 
-# ===== 用户查看邮件（核心功能） =====
+# ===== 用户查看邮件（核心） =====
 @app.route('/m/<link_id>')
 def view_mail(link_id):
-    """用户打开链接直接看到邮件"""
     links = load_links()
     
     if link_id not in links:
@@ -532,13 +532,10 @@ def view_mail(link_id):
     if link_data['status'] != 'active':
         return "<h2>⛔ 链接已被禁用</h2>", 403
     
-    # 更新查询次数
     link_data['query_count'] = link_data.get('query_count', 0) + 1
     save_links(links)
     
     email_addr = link_data['email']
-    
-    # 查询邮件
     result = get_latest_mails(email_addr, limit=10)
     
     if isinstance(result, dict) and 'error' in result:
@@ -559,15 +556,14 @@ def view_mail(link_id):
         </html>
         '''
     
-    # 显示邮件
     mail_html = ""
     for mail in result:
         folder_badge = ""
-        if mail.get('folder') and '垃圾' in str(mail.get('folder')):
+        if mail.get('folder') and ('垃圾' in str(mail.get('folder')) or 'Spam' in str(mail.get('folder'))):
             folder_badge = '<span style="background:#ff9800;color:white;padding:2px 8px;border-radius:4px;font-size:12px;">垃圾箱</span>'
         
         mail_html += f"""
-        <div style="border:1px solid #ddd;border-radius:8px;padding:15px;margin:15px 0;background:#f9f9f9;">
+        <div style="border:1px solid #ddd;border-radius:8px;padding:15px;margin:15px 0;background:white;">
             <div style="margin-bottom:8px;">
                 <b>发件人：</b>{mail['sender']} {folder_badge}
             </div>
@@ -615,6 +611,7 @@ def index():
 if __name__ == '__main__':
     print("=" * 50)
     print("直连邮箱系统启动")
+    print(f"域名: {DOMAIN}")
     print(f"已绑定 {len(ACCOUNTS)} 个邮箱")
     print("后台密码: 060910")
     print("=" * 50)
