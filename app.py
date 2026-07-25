@@ -25,7 +25,7 @@ ACCOUNTS_FILE = "accounts.txt"
 LINKS_FILE = "links.json"
 ADMIN_PASSWORD = "060910"
 DEFAULT_DAYS = 30
-DOMAIN = "你的域名"
+DOMAIN = "qqmailapi.zeabur.app"
 
 # ===== 读取账号 =====
 def load_accounts():
