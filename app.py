@@ -22,7 +22,7 @@ app.secret_key = 'direct-mail-2024'
 
 # ===== 配置 =====
 ACCOUNTS_FILE = "accounts.txt"
-LINKS_FILE = "links.json"
+LINKS_FILE = "/data/links.json"
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '060910')
 DEFAULT_DAYS = 30
 DOMAIN = "qqmailapi.zeabur.app"
