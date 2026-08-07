@@ -27,7 +27,7 @@ ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '060910')
 DEFAULT_DAYS = 30
 DOMAIN = "qqmailapi.zeabur.app"
 
-# ===== 读取账号 =====
+# ===== 读取账号（支持两种格式） =====
 def load_accounts():
     accounts = {}
     try:
@@ -36,6 +36,7 @@ def load_accounts():
                 line = line.strip()
                 if not line:
                     continue
+                
                 if "----" in line:
                     parts = line.split("----")
                     if len(parts) == 2:
@@ -66,7 +67,7 @@ def load_accounts():
 ACCOUNTS = load_accounts()
 print(f"已加载 {len(ACCOUNTS)} 个邮箱")
 
-# ===== 邮件解析 =====
+# ===== 邮件解析（纯文本，不提取验证码） =====
 def decode_str(s):
     if not s:
         return ""
@@ -85,7 +86,7 @@ def decode_str(s):
         return str(s)
 
 def get_mail_content(msg):
-    content = ""
+    """获取邮件纯文本内容"""
     try:
         all_parts = []
         if msg.is_multipart():
@@ -110,44 +111,27 @@ def get_mail_content(msg):
                 if text.strip():
                     all_parts.append((msg.get_content_type(), text))
         
+        # 优先纯文本
         for content_type, text in all_parts:
             if content_type == "text/plain":
-                content = text.strip()
-                break
+                return text.strip()
         
-        if not content:
-            for content_type, text in all_parts:
-                if content_type == "text/html":
-                    content = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
-                    content = re.sub(r'<[^>]+>', ' ', content)
-                    content = html.unescape(content)
-                    content = re.sub(r'\s+', ' ', content)
-                    content = content.strip()
-                    break
+        # 没有纯文本就用HTML
+        for content_type, text in all_parts:
+            if content_type == "text/html":
+                text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
+                text = re.sub(r'<[^>]+>', ' ', text)
+                text = html.unescape(text)
+                text = re.sub(r'\s+', ' ', text)
+                return text.strip()
         
-        if not content:
-            return "无法解析邮件内容"
-        
-        code = None
-        match = re.search(r'(\d)\s*(\d)\s*(\d)\s*(\d)\s*(\d)\s*(\d)', content)
-        if match:
-            code = ''.join(match.groups())
-        if not code:
-            match = re.search(r'\b(\d{4,6})\b', content)
-            if match:
-                code = match.group(1)
-        
-        content = content[:1000]
-        
-        if code:
-            return f"【验证码：{code}】\n{content}"
-        return content
+        return "无法解析邮件内容"
     except:
         return "解析失败"
 
-def get_latest_mails(email_addr, limit=10):
+def get_latest_mails(email_addr, limit=1):
     if email_addr not in ACCOUNTS:
-        return {'error': f'邮箱未绑定'}
+        return {'error': '邮箱未绑定'}
     
     auth_code = ACCOUNTS[email_addr]
     mail = None
@@ -159,7 +143,6 @@ def get_latest_mails(email_addr, limit=10):
         all_mail_ids = []
         folder_info = []
         
-        # 读取收件箱
         try:
             mail.select("INBOX")
             status, data = mail.search(None, "ALL")
@@ -167,10 +150,9 @@ def get_latest_mails(email_addr, limit=10):
                 for mid in data[0].split():
                     all_mail_ids.append(mid)
                     folder_info.append("INBOX")
-        except Exception as e:
-            print(f"读取收件箱失败: {e}")
+        except:
+            pass
         
-        # 读取垃圾箱
         spam_folders = ["垃圾箱", "[Gmail]/Spam", "Spam", "Junk"]
         for folder in spam_folders:
             try:
@@ -227,8 +209,7 @@ def get_latest_mails(email_addr, limit=10):
                             'folder': folder
                         })
                         break
-            except Exception as e:
-                print(f"读取邮件失败: {e}")
+            except:
                 continue
         
         return mails
@@ -257,7 +238,7 @@ def save_links(data):
     with open(LINKS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# ===== 登录页面 =====
+# ===== 登录 =====
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -282,7 +263,7 @@ def login():
     </html>
     '''
 
-# ===== 后台管理 =====
+# ===== 后台 =====
 @app.route('/admin')
 def admin():
     if not session.get('logged_in'):
@@ -336,7 +317,7 @@ def admin():
         <div style="background:#fff3cd;padding:15px;border-radius:8px;margin:15px 0;">
             <h3>➕ 批量生成链接</h3>
             <form action="/api/batch_create" method="post">
-                <textarea name="emails" placeholder="每行一个邮箱&#10;例如：&#10;123456@qq.com&#10;789012@qq.com" rows="8" style="width:100%;padding:10px;font-size:14px;"></textarea>
+                <textarea name="emails" placeholder="每行一个邮箱" rows="8" style="width:100%;padding:10px;font-size:14px;"></textarea>
                 <br>
                 <select name="days">
                     <option value="7">7天</option>
@@ -349,31 +330,17 @@ def admin():
             </form>
         </div>
         
-        <div style="background:#e3f2fd;padding:15px;border-radius:8px;margin:15px 0;">
-            <h3>🎯 快速生成单个链接</h3>
-            <form action="/api/single_create" method="post" style="display:flex;gap:10px;">
-                <input type="text" name="email" placeholder="输入邮箱地址" style="flex:1;padding:10px;border:2px solid #ddd;border-radius:8px;">
-                <select name="days">
-                    <option value="30">30天</option>
-                    <option value="7">7天</option>
-                    <option value="90">90天</option>
-                </select>
-                <button type="submit" style="padding:10px 20px;background:#2196F3;color:white;border:none;cursor:pointer;border-radius:8px;">生成</button>
-            </form>
-        </div>
-        
         <hr>
         <h3>🔗 链接列表（共 {len(links)} 个）</h3>
         <table border="1" cellpadding="8" style="width:100%;border-collapse:collapse;">
         <tr><th>链接</th><th>邮箱</th><th>创建时间</th><th>过期时间</th><th>状态</th><th>查询次数</th><th>操作</th></tr>
         {link_list if link_list else '<tr><td colspan="7">暂无链接</td></tr>'}
         </table>
-        <p style="color:#999;">✅正常 ⏰过期 ⛔禁用</p>
     </body>
     </html>
     '''
 
-# ===== 批量生成链接 =====
+# ===== 批量生成 =====
 @app.route('/api/batch_create', methods=['POST'])
 def batch_create():
     if not session.get('logged_in'):
@@ -395,15 +362,13 @@ def batch_create():
     
     links = load_links()
     now = datetime.now()
-    created = []
-    failed = []
+    results = []
     
     for email_addr in emails:
         if email_addr not in ACCOUNTS:
-            failed.append(f"{email_addr}（未绑定）")
+            results.append(f"{email_addr}----未绑定")
             continue
         
-        # 检查是否已存在
         existing = None
         for lid, ldata in links.items():
             if ldata['email'] == email_addr and ldata['status'] == 'active':
@@ -412,7 +377,7 @@ def batch_create():
         
         if existing:
             link_url = f"https://{DOMAIN}/m/{existing}"
-            created.append(f"✅ {email_addr} → {link_url}（已存在）")
+            results.append(f"{email_addr}----{link_url}")
             continue
         
         link_id = str(uuid.uuid4())[:8]
@@ -425,96 +390,35 @@ def batch_create():
             'query_count': 0
         }
         link_url = f"https://{DOMAIN}/m/{link_id}"
-        created.append(f"✅ {email_addr} → {link_url}")
+        results.append(f"{email_addr}----{link_url}")
     
     save_links(links)
     
-    result = "<h2>📧 生成结果</h2>"
-    for c in created:
-        result += f"<p>{c}</p>"
-    for f in failed:
-        result += f"<p>❌ {f}</p>"
-    result += '<br><a href="/admin">返回后台</a>'
-    return result
+    return '<pre style="font-size:14px;">' + '\n'.join(results) + '</pre><br><a href="/admin">返回后台</a>'
 
-# ===== 单个生成链接 =====
-@app.route('/api/single_create', methods=['POST'])
-def single_create():
-    if not session.get('logged_in'):
-        return redirect('/login')
-    
-    email_addr = request.form.get('email', '').strip()
-    days = int(request.form.get('days', 30))
-    
-    if not email_addr:
-        return "请输入邮箱", 400
-    
-    if '@' not in email_addr:
-        email_addr = email_addr + "@qq.com"
-    
-    if email_addr not in ACCOUNTS:
-        return f"邮箱 {email_addr} 未绑定", 400
-    
-    links = load_links()
-    now = datetime.now()
-    
-    # 检查是否已有活跃链接
-    for lid, ldata in links.items():
-        if ldata['email'] == email_addr and ldata['status'] == 'active':
-            link_url = f"https://{DOMAIN}/m/{lid}"
-            return f'''
-            <p>该邮箱已有活跃链接：</p>
-            <a href="{link_url}" target="_blank">{link_url}</a>
-            <br><a href="/admin">返回后台</a>
-            '''
-    
-    link_id = str(uuid.uuid4())[:8]
-    links[link_id] = {
-        'link_id': link_id,
-        'email': email_addr,
-        'created_at': now.strftime("%Y-%m-%d %H:%M:%S"),
-        'expire_at': (now + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S"),
-        'status': 'active',
-        'query_count': 0
-    }
-    save_links(links)
-    
-    link_url = f"https://{DOMAIN}/m/{link_id}"
-    return f'''
-    <h2>✅ 生成成功</h2>
-    <p>邮箱：{email_addr}</p>
-    <p>链接：<a href="{link_url}" target="_blank">{link_url}</a></p>
-    <p>有效期：{links[link_id]['expire_at']}</p>
-    <a href="/admin">返回后台</a>
-    '''
-
-# ===== 禁用链接 =====
+# ===== 禁用 =====
 @app.route('/api/disable/<link_id>')
 def disable_link(link_id):
     if not session.get('logged_in'):
         return redirect('/login')
-    
     links = load_links()
     if link_id in links:
         links[link_id]['status'] = 'disabled'
         save_links(links)
-    
     return redirect('/admin')
 
-# ===== 删除链接 =====
+# ===== 删除 =====
 @app.route('/api/delete/<link_id>')
 def delete_link(link_id):
     if not session.get('logged_in'):
         return redirect('/login')
-    
     links = load_links()
     if link_id in links:
         del links[link_id]
         save_links(links)
-    
     return redirect('/admin')
 
-# ===== 用户查看邮件（核心） =====
+# ===== 查看邮件（只显示最新1封，完整内容） =====
 @app.route('/m/<link_id>')
 def view_mail(link_id):
     links = load_links()
@@ -536,7 +440,7 @@ def view_mail(link_id):
     save_links(links)
     
     email_addr = link_data['email']
-    result = get_latest_mails(email_addr, limit=10)
+    result = get_latest_mails(email_addr, limit=1)
     
     if isinstance(result, dict) and 'error' in result:
         return f"<h2>❌ {result['error']}</h2>"
@@ -545,65 +449,49 @@ def view_mail(link_id):
         return f'''
         <!DOCTYPE html>
         <html>
-        <head><meta charset="UTF-8"><title>{email_addr} - 暂无邮件</title>
+        <head><meta charset="UTF-8"><title>{email_addr}</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         </head>
         <body style="font-family:Arial;max-width:600px;margin:20px auto;padding:20px;text-align:center;">
             <h2>📭 暂无邮件</h2>
             <p>{email_addr}</p>
-            <p style="color:#999;">请稍后再试或联系客服</p>
         </body>
         </html>
         '''
     
-    mail_html = ""
-    for mail in result:
-        folder_badge = ""
-        if mail.get('folder') and ('垃圾' in str(mail.get('folder')) or 'Spam' in str(mail.get('folder'))):
-            folder_badge = '<span style="background:#ff9800;color:white;padding:2px 8px;border-radius:4px;font-size:12px;">垃圾箱</span>'
-        
-        mail_html += f"""
-        <div style="border:1px solid #ddd;border-radius:8px;padding:15px;margin:15px 0;background:white;">
-            <div style="margin-bottom:8px;">
-                <b>发件人：</b>{mail['sender']} {folder_badge}
-            </div>
-            <div style="margin-bottom:8px;">
-                <b>主题：</b>{mail['subject']}
-            </div>
-            <div style="margin-bottom:8px;color:#999;font-size:12px;">
-                {mail.get('time', '')}
-            </div>
-            <div style="border-top:1px solid #eee;padding-top:10px;white-space:pre-wrap;word-break:break-word;">
-                {mail['content'][:2000]}
-            </div>
-        </div>
-        """
+    mail = result[0]
     
     return f'''
     <!DOCTYPE html>
     <html>
     <head>
         <meta charset="UTF-8">
-        <title>{email_addr} - 邮件查看</title>
+        <title>{email_addr}</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
             body {{ font-family: Arial, sans-serif; max-width: 600px; margin: 20px auto; padding: 20px; background: #f5f5f5; }}
             .header {{ background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; text-align: center; }}
             .refresh {{ display: inline-block; padding: 10px 30px; background: #4CAF50; color: white; text-decoration: none; border-radius: 8px; margin-top: 10px; }}
+            .mail-box {{ border:1px solid #ddd; border-radius:8px; padding:15px; background:white; }}
         </style>
     </head>
     <body>
         <div class="header">
             <h2>📧 {email_addr}</h2>
-            <p style="color:#999;">有效期至：{link_data['expire_at']}</p>
+            <p style="color:#999;">{mail.get('time', '')}</p>
             <a href="/m/{link_id}" class="refresh">🔄 刷新邮件</a>
         </div>
-        {mail_html}
+        <div class="mail-box">
+            <div style="margin-bottom:10px;"><b>发件人：</b>{mail['sender']}</div>
+            <div style="margin-bottom:10px;"><b>主题：</b>{mail['subject']}</div>
+            <div style="border-top:1px solid #eee;padding-top:10px;white-space:pre-wrap;word-break:break-word;">
+                {mail['content']}
+            </div>
+        </div>
     </body>
     </html>
     '''
 
-# ===== 首页 =====
 @app.route('/')
 def index():
     return redirect('/admin')
@@ -613,6 +501,5 @@ if __name__ == '__main__':
     print("直连邮箱系统启动")
     print(f"域名: {DOMAIN}")
     print(f"已绑定 {len(ACCOUNTS)} 个邮箱")
-    print("后台密码: 060910")
     print("=" * 50)
     app.run(host='0.0.0.0', port=8080)
